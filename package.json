@@ -1,0 +1,10 @@
+{
+  "name": "lendloop",
+  "private": true,
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev:server": "npm run dev -w server",
+    "test:server": "npm run test -w server",
+    "check:n8n": "node server/n8n/scripts/check-no-secrets.mjs"
+  }
+}

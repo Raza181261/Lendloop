@@ -1,0 +1,153 @@
+{
+  "name": "LendLoop - Request Notification",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-events",
+        "responseMode": "responseNode",
+        "options": { "rawBody": true }
+      },
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst headers = item.json.headers || {};\nconst buf = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst rawBody = buf.toString('utf8');\nconst timestamp = String(headers['x-lendloop-timestamp'] || '');\nconst signature = String(headers['x-lendloop-signature'] || '');\nreturn [{ json: { rawBody, timestamp, signature, signedString: `${timestamp}.${rawBody}` } }];"
+      },
+      "name": "Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.signedString }}",
+        "dataPropertyName": "expected",
+        "secret": "={{ $env.LENDLOOP_HMAC_SECRET }}",
+        "encoding": "hex"
+      },
+      "name": "Compute HMAC",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.first().json;\nconst sig = String(j.signature).replace(/^sha256=/, '');\nconst exp = String(j.expected);\n// constant-time compare\nlet diff = sig.length ^ exp.length;\nfor (let i = 0; i < Math.min(sig.length, exp.length); i++) {\n  diff |= sig.charCodeAt(i) ^ exp.charCodeAt(i);\n}\nconst ts = Number(j.timestamp);\nconst fresh = Number.isFinite(ts) && Math.abs(Date.now() - ts) <= 5 * 60 * 1000;\nlet payload = null;\ntry { payload = JSON.parse(j.rawBody); } catch (e) {}\nconst valid = diff === 0 && fresh && payload !== null;\nreturn [{ json: valid ? { valid, ...payload } : { valid: false } }];"
+      },
+      "name": "Verify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Signature valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"error\": \"Invalid signature\" }",
+        "options": { "responseCode": 401 }
+      },
+      "name": "Respond 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 160]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true }",
+        "options": { "responseCode": 200 }
+      },
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, -80]
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "logic": "removeItemsWithAlreadySeenKeyValues",
+        "dedupeValue": "={{ $json.eventId }}",
+        "options": {}
+      },
+      "name": "Skip duplicates",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [1320, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json;\nconst tool = e.toolName;\nconst dates = `${e.startDate} to ${e.endDate}`;\nlet subject = '';\nlet text = '';\n\nif (e.type === 'request.created') {\n  subject = `New borrow request for ${tool}`;\n  text = `${e.otherPartyName} wants to borrow your ${tool} (${dates}).`;\n} else if (e.type === 'loan.returned') {\n  subject = `${tool} marked as returned`;\n  text = `${e.otherPartyName} confirmed that ${tool} was returned. Thanks!`;\n} else if (e.status === 'approved') {\n  subject = `Request approved: ${tool}`;\n  text = `${e.otherPartyName} approved your request for ${tool} (${dates}).`;\n} else if (e.status === 'declined') {\n  subject = `Request declined: ${tool}`;\n  text = `${e.otherPartyName} declined your request for ${tool}.`;\n} else if (e.status === 'cancelled') {\n  subject = `Request cancelled: ${tool}`;\n  text = `${e.otherPartyName} cancelled their request for ${tool}.`;\n} else {\n  throw new Error(`Unknown event: ${e.type}/${e.status}`);\n}\n\n// MOCK notification (visible in the execution view).\n// Replace this node with Email / Slack / Discord later.\nreturn [{ json: { channel: 'mock', to: e.recipient.email, name: e.recipient.name, subject, text, eventId: e.eventId } }];"
+      },
+      "name": "Build notification (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, -80],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Prepare", "type": "main", "index": 0 }]]
+    },
+    "Prepare": {
+      "main": [[{ "node": "Compute HMAC", "type": "main", "index": 0 }]]
+    },
+    "Compute HMAC": {
+      "main": [[{ "node": "Verify", "type": "main", "index": 0 }]]
+    },
+    "Verify": {
+      "main": [[{ "node": "Signature valid?", "type": "main", "index": 0 }]]
+    },
+    "Signature valid?": {
+      "main": [
+        [{ "node": "Respond 200", "type": "main", "index": 0 }],
+        [{ "node": "Respond 401", "type": "main", "index": 0 }]
+      ]
+    },
+    "Respond 200": {
+      "main": [[{ "node": "Skip duplicates", "type": "main", "index": 0 }]]
+    },
+    "Skip duplicates": {
+      "main": [
+        [{ "node": "Build notification (mock)", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,137 @@
+{
+  "name": "LendLoop - Overdue Reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "days", "daysInterval": 1, "triggerAtHour": 9 }
+          ]
+        }
+      },
+      "name": "Daily 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CONVEX_SITE_URL }}/n8n/overdue-loans",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": { "timeout": 15000 }
+      },
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [220, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": { "id": "", "name": "LendLoop Convex API" }
+      }
+    },
+    {
+      "parameters": { "fieldToSplitOut": "loans", "options": {} },
+      "name": "One item per loan",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const l = $json;\nlet status = 'sent';\nlet error;\nlet message = '';\ntry {\n  if (!l.borrowerEmail) throw new Error('Borrower has no email');\n  message = `Hi ${l.borrowerName}, \"${l.toolName}\" is ${l.daysOverdue} day(s) overdue. Please return it to the lender.`;\n  // MOCK: replace this try-block with an Email / Slack / Discord node later.\n  console.log(`[MOCK REMINDER] to=${l.borrowerEmail} :: ${message}`);\n} catch (e) {\n  status = 'failed';\n  error = String(e.message).slice(0, 200);\n}\nreturn { json: { loanId: l.loanId, reminderKey: l.reminderKey, channel: 'mock', status, ...(error ? { error } : {}), message } };"
+      },
+      "name": "Send reminder (mock)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $json;\nconst payload = { reminderKey: j.reminderKey, loanId: j.loanId, status: j.status, channel: j.channel };\nif (j.error) payload.error = j.error;\nconst body = JSON.stringify(payload);\nconst timestamp = String(Date.now());\nreturn { json: { body, timestamp, signedString: `${timestamp}.${body}` } };"
+      },
+      "name": "Build write-back body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 0]
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "type": "SHA256",
+        "value": "={{ $json.signedString }}",
+        "dataPropertyName": "signature",
+        "secret": "={{ $env.LENDLOOP_HMAC_SECRET }}",
+        "encoding": "hex"
+      },
+      "name": "Sign body",
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 1,
+      "position": [1100, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_SITE_URL }}/n8n/reminders",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-LendLoop-Timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "X-LendLoop-Signature",
+              "value": "=sha256={{ $json.signature }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.body }}",
+        "options": { "timeout": 15000 }
+      },
+      "name": "Write back to Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 0],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": { "id": "", "name": "LendLoop Convex API" }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 9am": {
+      "main": [[{ "node": "Fetch overdue loans", "type": "main", "index": 0 }]]
+    },
+    "Fetch overdue loans": {
+      "main": [[{ "node": "One item per loan", "type": "main", "index": 0 }]]
+    },
+    "One item per loan": {
+      "main": [[{ "node": "Send reminder (mock)", "type": "main", "index": 0 }]]
+    },
+    "Send reminder (mock)": {
+      "main": [
+        [{ "node": "Build write-back body", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build write-back body": {
+      "main": [[{ "node": "Sign body", "type": "main", "index": 0 }]]
+    },
+    "Sign body": {
+      "main": [[{ "node": "Write back to Convex", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

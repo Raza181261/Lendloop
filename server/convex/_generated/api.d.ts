@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as ai_agent from "../ai/agent.js";
+import type * as ai_data from "../ai/data.js";
 import type * as automation_activity from "../automation/activity.js";
 import type * as automation_dispatch from "../automation/dispatch.js";
 import type * as automation_hmac from "../automation/hmac.js";
@@ -38,6 +40,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  "ai/agent": typeof ai_agent;
+  "ai/data": typeof ai_data;
   "automation/activity": typeof automation_activity;
   "automation/dispatch": typeof automation_dispatch;
   "automation/hmac": typeof automation_hmac;

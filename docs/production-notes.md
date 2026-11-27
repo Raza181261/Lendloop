@@ -194,3 +194,22 @@ npm run check:n8n, Playwright E2E, build
    an overdue loan to confirm the reminder and the write-back.
 7. Confirm alerts fire by deliberately breaking the webhook in staging.
 8. Enable monitoring, backups, and the CI gates above.
+
+## 12. AI assistant
+
+- **Rate limiting per user** (for example 10 questions per minute and a daily
+  cap). This is the most important gap: today one user could spend the whole
+  provider budget. Also set a hard credit limit on the OpenRouter key.
+- **Cost and quality**: pin the model id, monitor token use per request, and
+  alert on spikes. Choose a model with reliable tool calling.
+- **Privacy**: the provider receives names, tool names and dates. Disclose it in
+  the privacy policy, and restrict OpenRouter routing to providers that do not
+  train on data.
+- **Streaming and persistence**: stream replies, and store chat history on the
+  server with a retention policy instead of keeping it in the browser.
+- **Evaluation**: a small set of fixed questions with expected tool calls, run
+  in CI against a cheap model, to catch regressions and prompt-injection cases.
+- **Fallback**: if the provider is down (402/429/5xx), fall back to the
+  rule-based answers or show a clear "busy" message.
+- **Audit**: log which tools were called per question (not the full text) for
+  admin review.
